@@ -1,0 +1,19 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>cbtest</title></head><body>
+<pre id="out">running...</pre>
+<script src="https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js"></script>
+<script>
+(async function(){
+  var out=document.getElementById('out');
+  try {
+    var app=cloudbase.init({env:'balanced-turkey-d0fd0a64af746d59',region:'ap-shanghai',accessKey:'eyJhbGciOiJSUzI1NiIsImtpZCI6IjlkMWRjMzFlLWI0ZDAtNDQ4Yi1hNzZmLWIwY2M2M2Q4MTQ5OCJ9.eyJpc3MiOiJodHRwczovL2JhbGFuY2VkLXR1cmtleS1kMGZkMGE2NGFmNzQ2ZDU5LmFwLXNoYW5naGFpLnRjYi1hcGkudGVuY2VudGNsb3VkYXBpLmNvbSIsInN1YiI6ImFub24iLCJhdWQiOiJiYWxhbmNlZC10dXJrZXktZDBmZDBhNjRhZjc0NmQ1OSIsImV4cCI6NDA5NjUzMzIwMCwiaWF0IjoxNzkyODUwMDAwLCJub25jZSI6IldKelh3R1dsUXpDZ3VsNTlCNk5GVHciLCJhdF9oYXNoIjoiV0p6WHdHV2xRekNndWw1OUI2TkZUdyIsIm5hbWUiOiJBbm9ueW1vdXMiLCJzY29wZSI6ImFub255bW91cyIsInByb2plY3RfaWQiOiJiYWxhbmNlZC10dXJrZXktZDBmZDBhNjRhZjc0NmQ1OSIsIm1ldGEiOnsicGxhdGZvcm0iOiJQdWJsaXNoYWJsZUtleSJ9LCJ1c2VyX3R5cGUiOiIiLCJjbGllbnRfdHlwZSI6ImNsaWVudF91c2VyIiwiaXNfc3lzdGVtX2FkbWluIjpmYWxzZX0.KFRmzxnWiOGQHqJkj85xpQTAXF_RHD6OQpvUN6zF4uZweqQbk-bd_GdUXd2bxmMc-h31q75ABn5CU7QRM7WTCAJt7-QrrD0_tPOxbULAz78rFtCTvonbSb3892MmSVtBm9nTz8nCbJLVFAWxYMKqoP8y1jevVTCVQv9xictTwPHF909qhd1x1Fhy-KyGQaYxkbwZvBhC7wtR4Wg-KOVkX58hhduB8D2NAe2GjL2U7MtkL-LUFJ5aMtwjmorDAY5DXoMSZ_9c3eJc2iCINEeF6fVCn1ZSlF8yJ4qA4iNyfJWVcTrI_ybHNYdXi0_H1B4I5WekbADk0uG-8kbMjU5lLQ'});
+    var db=app.database();
+    var r=await db.collection('messages').limit(5).get();
+    var n=(r&&r.data)?r.data.length:0;
+    out.textContent='GET OK, count='+n;
+    document.title='CBOK::'+n;
+  } catch(e) {
+    out.textContent='ERR '+(e.message||e);
+    document.title='CBERR::'+(e.message||e);
+  }
+})();
+</script></body></html>
