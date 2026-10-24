@@ -1336,6 +1336,8 @@ body.has-bg.dark-theme .chat-panel .chat-box { background: rgba(0, 0, 0, .3); }
             <label>天气城市</label><input type="text" id="editCity" placeholder="如：合肥" autocomplete="off">
             <label>收信邮箱（留言板「写信给我」用，留空则隐藏）</label>
             <input type="email" id="editEmail" placeholder="you@example.com" autocomplete="off">
+            <label>留言转发 Key（Web3Forms，可选；填了网页表单直接发到你邮箱）</label>
+            <input type="text" id="editWeb3" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off">
             <label>纪念日日期</label><input type="date" id="editAnnivDate">
             <label>纪念日名称</label><input type="text" id="editAnnivName" autocomplete="off">
 
@@ -2180,6 +2182,7 @@ const DEFAULT_DATA = {
     notice: '新图集已更新 | 雨、翼、百合与眼睛，翻开看看吧。\n来自未眠的留言 | 雪落无声，记得早点睡。',
     notes: [],
     contactEmail: '',
+    web3Key: '',
     tabs: { home: '首页', explore: '漫游', gallery: '图集', ai: '分身' },
     guestApi: {
         provider: '',
@@ -2399,6 +2402,7 @@ async function render() {
     applyTabLabels(data.tabs);
     contactEmail = String(data.contactEmail || '').trim();
     updateMailLink();
+    updateMailNote();
     Snow.setLevel(data.snow || 'normal');
     $('#btnSnow').style.display = data.snow === 'off' ? 'none' : '';
     renderGallery(data.gallery);
@@ -2452,6 +2456,25 @@ function updateMailLink() {
     ['input', 'change'].forEach(ev => f.addEventListener(ev, updateMailLink));
 })();
 
+function updateMailNote() {
+    const note = document.querySelector('.mail-note');
+    if (!note) return;
+    note.textContent = (siteSnapshot && siteSnapshot.web3Key)
+        ? '留言会直接发送到我的邮箱，不会公开显示。'
+        : '只有邮件才会被看到，网页留言仅保存在你本地。';
+}
+
+async function saveLocalMsg(name, body) {
+    try {
+        const store = await readStore();
+        store.messages = store.messages || [];
+        store.messages.push({ name, body, time: new Date().toLocaleString() });
+        const r = await writeStore(store);
+        if (r && r.ok) renderMsgs(store.messages);
+        return r;
+    } catch (err) { return { ok: false, error: err.message }; }
+}
+
 $('#guestForm').addEventListener('submit', async e => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -2460,6 +2483,40 @@ $('#guestForm').addEventListener('submit', async e => {
     const trap = String(fd.get('website') || '').trim();
     if (trap) { e.target.reset(); return; }          // 蜜罐：机器人填写则静默丢弃
     if (!name || !body) return;
+
+    /* —— 网页表单直接转发到邮箱（Web3Forms）—— */
+    const w3key = (siteSnapshot && siteSnapshot.web3Key) || '';
+    if (w3key) {
+        const last = Number(localStorage.getItem('snowfall_last_msg') || 0);
+        if (Date.now() - last < 20000) { toast('刚留过啦，20 秒后再试'); return; }
+        const btn = e.target.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        try {
+            const res = await fetchT('https://api.web3forms.com/submit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                body: JSON.stringify({
+                    access_key: w3key,
+                    subject: '来自 ' + name + ' 的留言 · Snowfall',
+                    from_name: 'Snowfall 留言板',
+                    name: name,
+                    message: body,
+                    botcheck: ''
+                })
+            }, 15000);
+            let j = {};
+            try { j = await res.json(); } catch (e2) {}
+            if (!res.ok || !j.success) throw new Error(j.message || ('HTTP ' + res.status));
+            localStorage.setItem('snowfall_last_msg', String(Date.now()));
+            e.target.reset();
+            toast('已送出，我会在邮箱里看到 ✦');
+        } catch (err) {
+            const r = await saveLocalMsg(name, body);
+            e.target.reset();
+            toast(r && r.ok ? '发送失败，已先存在你本地' : '留言失败：' + err.message);
+        } finally { btn.disabled = false; }
+        return;
+    }
 
     /* —— 公共后端模式 —— */
     if (guestApiOn()) {
@@ -2491,11 +2548,9 @@ $('#guestForm').addEventListener('submit', async e => {
     }
 
     /* —— 本地 / Gist 模式 —— */
-    const store = await readStore(); store.messages = store.messages || [];
-    store.messages.push({ name, body, time: new Date().toLocaleString() });
-    const r = await writeStore(store); 
-    if(r.ok) {
-        e.target.reset(); renderMsgs(store.messages); toast('已留下 ✦');
+    const r = await saveLocalMsg(name, body);
+    if(r && r.ok) {
+        e.target.reset(); toast('已留下 ✦');
     } else {
         toast('留言失败：' + r.error);
     }
@@ -2545,6 +2600,7 @@ async function openAdmin() {
     $('#editSplashText').value = d.splashText || '';
     $('#editName').value = d.name; $('#editSig').value = d.sig; $('#editHeroTitle').value = d.heroTitle; $('#editHeroSub').value = d.heroSub; $('#editCity').value = d.city;
     $('#editEmail').value = d.contactEmail || '';
+    $('#editWeb3').value = d.web3Key || '';
     $('#editMusicUrl').value = d.musicUrl || '';
     $('#editTyped').value = d.typed || '';
     $('#editFx').value = d.fx || 'full';
@@ -2712,6 +2768,7 @@ $('#btnSaveProfile').onclick = async () => {
     d.splashText = $('#editSplashText').value;
     d.name = $('#editName').value; d.sig = $('#editSig').value; d.heroTitle = $('#editHeroTitle').value; d.heroSub = $('#editHeroSub').value; d.city = $('#editCity').value;
     d.contactEmail = $('#editEmail').value.trim();
+    d.web3Key = $('#editWeb3').value.trim();
     d.musicUrl = $('#editMusicUrl').value.trim();
     d.typed = $('#editTyped').value;
     d.fx = $('#editFx').value;
