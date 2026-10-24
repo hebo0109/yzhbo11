@@ -895,6 +895,13 @@ body.dark-theme .ios-notice { background: rgba(38, 38, 42, .88); border-color: r
 .ai-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ai-meta h2 { font-family: var(--font-serif); font-size: 20px; font-weight: 600; line-height: 1.2; }
 .ai-meta p { font-size: 11px; color: var(--text-soft); display: flex; align-items: center; gap: 6px; margin-top: 4px; letter-spacing: .06em; }
+.lang-switch { margin-left: auto; display: flex; gap: 2px; padding: 3px; border-radius: 100px; background: var(--bg-soft); border: 1px solid var(--border); flex: 0 0 auto; }
+.lang-switch button {
+    border: 0; background: transparent; color: var(--text-soft); font-family: var(--font-sans);
+    font-size: 11px; line-height: 1; padding: 6px 9px; border-radius: 100px;
+    cursor: pointer; transition: all .25s var(--fx-ease);
+}
+.lang-switch button.active { background: var(--accent); color: #fff; }
 .online-dot { width: 6px; height: 6px; border-radius: 50%; background: #8fbf9a; box-shadow: 0 0 0 3px rgba(143, 191, 154, .18); }
 #pageChat .site-footer { margin-top: 18px; }
 .chat-panel {
@@ -1189,6 +1196,11 @@ body.kb-open .chat-panel { height: auto; min-height: 300px; }
         <div class="ai-meta">
             <h2 id="aiName">AI 分身</h2>
             <p><i class="online-dot"></i>在线 · 随时聊聊</p>
+        </div>
+        <div class="lang-switch" id="langSwitch" role="group" aria-label="回复语言">
+            <button type="button" data-lang="zh" class="active" title="中文回复">中</button>
+            <button type="button" data-lang="en" title="Reply in English">EN</button>
+            <button type="button" data-lang="ja" title="日本語で返信">日</button>
         </div>
     </div>
     <div class="chat-panel">
@@ -1629,6 +1641,29 @@ function saveAiCfg(cfg) { localStorage.setItem(AI_CFG_KEY, JSON.stringify(cfg));
 let chatHistory = []; 
 let isTyping = false;
 
+/* ================= AI 回复语言 ================= */
+const AI_LANG_KEY = 'snowfall_ai_lang';
+const AI_LANG_NAMES = {
+    zh: 'Simplified Chinese (简体中文)',
+    en: 'English',
+    ja: 'Japanese (日本語)'
+};
+function getAiLang() {
+    const l = localStorage.getItem(AI_LANG_KEY);
+    return AI_LANG_NAMES[l] ? l : 'zh';
+}
+function setAiLang(l) {
+    if (!AI_LANG_NAMES[l]) l = 'zh';
+    localStorage.setItem(AI_LANG_KEY, l);
+    document.querySelectorAll('#langSwitch button').forEach(b => b.classList.toggle('active', b.dataset.lang === l));
+}
+(function initAiLang() {
+    const box = $('#langSwitch');
+    if (!box) return;
+    box.querySelectorAll('button').forEach(b => { b.onclick = () => setAiLang(b.dataset.lang); });
+    setAiLang(getAiLang());
+})();
+
 function appendChatMsg(role, text) {
     const box = $('#chatBox');
     const div = document.createElement('div');
@@ -1668,8 +1703,10 @@ async function sendChat() {
     if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
 
     try {
-        const messages = [];
-        if (cfg.prompt) messages.push({ role: 'system', content: cfg.prompt });
+        const langName = AI_LANG_NAMES[getAiLang()] || AI_LANG_NAMES.zh;
+        const langRule = `\n\n[Reply language] Always reply in ${langName}, even if the user writes in a different language. Keep the same personality and tone.`;
+        const sysPrompt = (cfg.prompt ? cfg.prompt : '你是一个温柔、简洁的助手。') + langRule;
+        const messages = [{ role: 'system', content: sysPrompt }];
         messages.push(...chatHistory);
 
         let baseUrl = (cfg.url || 'https://api.openai.com/v1').replace(/\/$/, '');
@@ -1710,13 +1747,25 @@ $('#chatInput').addEventListener('keypress', e => { if (e.key === 'Enter') sendC
 (function () {
     const ci = $('#chatInput');
     if (!ci) return;
+    const page = $('#pageChat');
     const vv = window.visualViewport;
     const isOpen = () => document.body.classList.contains('kb-open');
+    const kbNow = () => vv ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)) : 0;
+
+    function closeKb() {
+        if (!isOpen()) return;
+        document.body.classList.remove('kb-open');
+        document.documentElement.style.setProperty('--kb', '0px');
+    }
 
     function syncKb() {
         if (!vv) return;
-        const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+        const kb = kbNow();
         document.documentElement.style.setProperty('--kb', kb + 'px');
+        if (kb === 0 && isOpen()) {
+            const ae = document.activeElement;
+            if (ae !== ci && !(page && page.contains(ae))) closeKb();
+        }
         if (isOpen() && kb > 0) {
             // 键盘动画结束后，把输入框贴到键盘上沿
             clearTimeout(syncKb._t);
@@ -1732,14 +1781,25 @@ $('#chatInput').addEventListener('keypress', e => { if (e.key === 'Enter') sendC
         setTimeout(syncKb, 300);
         setTimeout(() => { if (isOpen()) { try { ci.scrollIntoView({ block: 'end' }); } catch (e) {} } }, 650);
     });
+
+    /* 点发送按钮时不要让输入框失焦：否则键盘收起、页面留白塌缩，看起来像“跳回顶部” */
+    const sendBtn = $('#chatSendBtn');
+    if (sendBtn) {
+        ['pointerdown', 'mousedown'].forEach(ev =>
+            sendBtn.addEventListener(ev, e => e.preventDefault())
+        );
+    }
+
     ci.addEventListener('blur', () => {
         setTimeout(() => {
-            if (document.activeElement !== ci) {
-                document.body.classList.remove('kb-open');
-                document.documentElement.style.setProperty('--kb', '0px');
-            }
-        }, 120);
+            const ae = document.activeElement;
+            if (ae === ci) return;
+            if (page && page.contains(ae)) return;   // 点了聊天页里的按钮/气泡
+            if (kbNow() > 0) return;                 // 键盘还开着
+            closeKb();
+        }, 150);
     });
+
     if (vv) {
         vv.addEventListener('resize', syncKb);
         vv.addEventListener('scroll', syncKb);
