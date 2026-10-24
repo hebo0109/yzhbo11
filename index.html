@@ -2443,12 +2443,8 @@ function updateMailLink() {
     if (!box || !link) return;
     if (!contactEmail) { box.style.display = 'none'; return; }
     box.style.display = '';
-    const f = $('#guestForm');
-    const name = f && f.name ? String(f.name.value || '').trim() : '';
-    const body = f && f.body ? String(f.body.value || '').trim() : '';
-    const subject = name ? `来自 ${name} 的留言` : '来自小雪窝的留言';
-    const content = (body ? body + '\n\n' : '') + '—— 来自 ' + window.location.href;
-    link.href = 'mailto:' + contactEmail + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(content);
+    // 只带地址、不带任何查询参数，避免部分邮件客户端把 ?subject=... 拼进收件人
+    link.href = 'mailto:' + contactEmail;
 }
 (function () {
     const f = $('#guestForm');
@@ -2461,7 +2457,7 @@ function updateMailNote() {
     if (!note) return;
     note.textContent = (siteSnapshot && siteSnapshot.web3Key)
         ? '留言会直接发送到我的邮箱，不会公开显示。'
-        : '只有邮件才会被看到，网页留言仅保存在你本地。';
+        : '只有邮件才会被看到；点开后会打开你的邮箱，写好后发给我。';
 }
 
 async function saveLocalMsg(name, body) {
@@ -2550,7 +2546,7 @@ $('#guestForm').addEventListener('submit', async e => {
     /* —— 本地 / Gist 模式 —— */
     const r = await saveLocalMsg(name, body);
     if(r && r.ok) {
-        e.target.reset(); toast('已留下 ✦');
+        e.target.reset(); toast('已存在本地（我收不到，请用邮件）');
     } else {
         toast('留言失败：' + r.error);
     }
