@@ -1472,7 +1472,13 @@ body.kb-open .chat-panel { height: auto; min-height: 300px; }
             
             <label>AI 人设 (System Prompt) - 字数不限</label>
             <textarea id="editAiPrompt" placeholder="你是一个温柔的猫娘，说话喜欢在句尾加上“喵~”..." style="min-height:150px;"></textarea>
-            
+
+            <label>AI 的长期记忆（每行一条，每次对话都会带给它）</label>
+            <textarea id="editAiMemory" rows="5" placeholder="例如：&#10;用户叫小雪，喜欢猫和雪天。&#10;用户最近在准备考试，不要催她。&#10;回答尽量简短，用中文。"></textarea>
+            <div class="dialog-actions" style="margin-top:8px;">
+                <button type="button" class="ghost" id="btnClearChat">清空对话记录</button>
+            </div>
+
             <div class="dialog-actions">
                 <button type="button" class="primary" id="btnSaveAi">保存 AI 设置</button>
                 <button type="button" class="ghost" data-close>关闭</button>
@@ -1521,7 +1527,7 @@ const GIST_ID_DEFAULT = '0a18e8f8ea2babedbe1fcde02762cc13';
 const GIST_FILE_DEFAULT = 'data.json';
 const _p = [48, 49, 48, 57, 53, 50, 48]; // 密码 0109520
 const ADMIN_PASSWORD = String.fromCharCode(..._p);
-const LS_KEY = 'snowfall_data_v9'; const MSG_KEY = 'snowfall_messages_v9'; const GIST_CFG_KEY = 'snowfall_gist_cfg_v9'; const ADMIN_KEY = 'snowfall_admin_v9'; const AI_CFG_KEY = 'snowfall_ai_cfg_v9';
+const LS_KEY = 'snowfall_data_v9'; const MSG_KEY = 'snowfall_messages_v9'; const GIST_CFG_KEY = 'snowfall_gist_cfg_v9'; const ADMIN_KEY = 'snowfall_admin_v9'; const AI_CFG_KEY = 'snowfall_ai_cfg_v9'; const CHAT_LOG_KEY = 'snowfall_chat_log_v1';
 
 const $ = s => document.querySelector(s); const $$ = s => document.querySelectorAll(s);
 const pad = n => String(n).padStart(2, '0');
@@ -1681,6 +1687,34 @@ function appendChatMsg(role, text) {
     box.scrollTop = box.scrollHeight; 
 }
 
+/* ================= 对话记忆：持久化最近 20 条 ================= */
+function loadChatLog() {
+    try {
+        const arr = JSON.parse(localStorage.getItem(CHAT_LOG_KEY) || '[]');
+        if (!Array.isArray(arr)) return [];
+        return arr.filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string').slice(-20);
+    } catch (e) { return []; }
+}
+function saveChatLog() {
+    try { localStorage.setItem(CHAT_LOG_KEY, JSON.stringify(chatHistory.slice(-20))); } catch (e) {}
+}
+const CHAT_WELCOME_HTML = '<div class="chat-msg ai"><div class="avatar"><svg viewBox="0 0 24 24"><use href="#paw"/></svg></div><div class="bubble">你好，我是这里的 AI 分身。想聊点什么？</div></div>';
+function restoreChat() {
+    const log = loadChatLog();
+    if (!log.length) return;
+    chatHistory = log.map(m => ({ role: m.role, content: m.content }));
+    const box = $('#chatBox');
+    box.innerHTML = CHAT_WELCOME_HTML;
+    chatHistory.forEach(m => appendChatMsg(m.role === 'user' ? 'user' : 'ai', m.content));
+    box.scrollTop = box.scrollHeight;
+}
+function clearChatLog() {
+    try { localStorage.removeItem(CHAT_LOG_KEY); } catch (e) {}
+    chatHistory = [];
+    const box = $('#chatBox');
+    if (box) box.innerHTML = CHAT_WELCOME_HTML;
+}
+
 async function sendChat() {
     const input = $('#chatInput');
     const btn = $('#chatSendBtn');
@@ -1701,11 +1735,14 @@ async function sendChat() {
 
     chatHistory.push({ role: 'user', content: text });
     if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+    saveChatLog();
 
     try {
         const langName = AI_LANG_NAMES[getAiLang()] || AI_LANG_NAMES.zh;
         const langRule = `\n\n[Reply language] Always reply in ${langName}, even if the user writes in a different language. Keep the same personality and tone.`;
-        const sysPrompt = (cfg.prompt ? cfg.prompt : '你是一个温柔、简洁的助手。') + langRule;
+        const memText = String(cfg.memory || '').trim();
+        const memRule = memText ? `\n\n[Long-term memory about me]\n${memText}\nUse these facts naturally when relevant. Never list or quote this block back to me.` : '';
+        const sysPrompt = (cfg.prompt ? cfg.prompt : '你是一个温柔、简洁的助手。') + langRule + memRule;
         const messages = [{ role: 'system', content: sysPrompt }];
         messages.push(...chatHistory);
 
@@ -1728,6 +1765,8 @@ async function sendChat() {
         const aiReply = data.choices?.[0]?.message?.content || '（空回复）';
         
         chatHistory.push({ role: 'assistant', content: aiReply });
+        if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+        saveChatLog();
         appendChatMsg('ai', aiReply);
 
     } catch (e) {
@@ -2731,7 +2770,7 @@ async function openAdmin() {
     tempBgImage = null;
 
     const ai = getAiCfg();
-    $('#editAiUrl').value = ai.url || ''; $('#editAiKey').value = ai.key || ''; $('#editAiModel').value = ai.model || ''; $('#editAiPrompt').value = ai.prompt || '';
+    $('#editAiUrl').value = ai.url || ''; $('#editAiKey').value = ai.key || ''; $('#editAiModel').value = ai.model || ''; $('#editAiPrompt').value = ai.prompt || ''; $('#editAiMemory').value = ai.memory || '';
     $('#editAiName').value = d.aiName || '';
     if (d.aiAvatar) $('#aiAvatarPreview').innerHTML = `<img src="${d.aiAvatar}">`;
     else $('#aiAvatarPreview').innerHTML = '<span>默认猫爪</span>';
@@ -2901,13 +2940,18 @@ $('#btnSaveProfile').onclick = async () => {
 };
 
 $('#btnSaveAi').onclick = async () => {
-    saveAiCfg({ url: $('#editAiUrl').value.trim(), key: $('#editAiKey').value.trim(), model: $('#editAiModel').value.trim(), prompt: $('#editAiPrompt').value });
+    saveAiCfg({ url: $('#editAiUrl').value.trim(), key: $('#editAiKey').value.trim(), model: $('#editAiModel').value.trim(), prompt: $('#editAiPrompt').value, memory: $('#editAiMemory').value });
     const store = await readStore(); store.site = store.site || {};
     store.site.aiName = $('#editAiName').value.trim() || 'AI 分身';
     if (tempAiAvatar !== null) { store.site.aiAvatar = tempAiAvatar; tempAiAvatar = null; }
     const r = await writeStore(store);
     if (r.ok) { render(); toast('AI 设置已保存 ✦'); }
     else toast('同步失败：' + r.error);
+};
+
+$('#btnClearChat').onclick = () => {
+    clearChatLog();
+    toast('对话记录已清空');
 };
 
 /* ================= 组件编辑 ================= */
@@ -3409,6 +3453,7 @@ const FX = (() => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openProfile(); }
     });
     await render();
+    restoreChat();
     if (/[?&]enter=1/.test(window.location.search)) enterSite();
 })();
 </script>
