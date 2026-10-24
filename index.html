@@ -2152,13 +2152,24 @@ function readLocalData() { try { const raw = localStorage.getItem(LS_KEY); retur
 function writeLocalData(d) { localStorage.setItem(LS_KEY, JSON.stringify(d)); _cache = { site: d, messages: _cache ? _cache.messages : [] }; }
 
 async function readStore(force = false) {
-    const cfg = loadGistConfig(); if (!cfg.id) return { site: readLocalData(), messages: JSON.parse(localStorage.getItem(MSG_KEY) || '[]') };
+    const cfg = loadGistConfig();
+    const localSite = readLocalData();
+    const localMsgs = JSON.parse(localStorage.getItem(MSG_KEY) || '[]');
+    if (!cfg.id) return { site: localSite, messages: localMsgs };
     if (!force && _cache) return _cache;
     try {
         const r = await fetchT(`https://api.github.com/gists/${cfg.id}?t=${Date.now()}`, { headers: { 'Accept': 'application/vnd.github+json' } });
-        const d = await r.json(); let parsed = {}; try { parsed = JSON.parse(d.files[cfg.file].content); } catch {}
-        _cache = { site: parsed.site || {}, messages: parsed.messages || [] }; return _cache;
-    } catch (e) { return { site: readLocalData(), messages: [] }; }
+        const d = await r.json();
+        let parsed = {};
+        try { parsed = JSON.parse(d.files[cfg.file].content); } catch {}
+        const cloudSite = parsed.site || {};
+        const hasCloud = Object.keys(cloudSite).length > 0;
+        // 本地打底、云端覆盖：首次启用云端时不会把旧浏览器里的内容弄丢
+        const site = hasCloud ? Object.assign({}, localSite, cloudSite) : localSite;
+        const messages = (Array.isArray(parsed.messages) && parsed.messages.length) ? parsed.messages : localMsgs;
+        _cache = { site, messages };
+        return _cache;
+    } catch (e) { return { site: localSite, messages: localMsgs }; }
 }
 
 async function writeStore(store) {
