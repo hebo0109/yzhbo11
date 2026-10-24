@@ -917,11 +917,8 @@ body.has-bg.dark-theme .chat-panel .chat-box { background: rgba(0, 0, 0, .3); }
 /* 手机上输入框聚焦（键盘弹出）时：让出键盘高度，并收起会遮挡的悬浮元素 */
 body.kb-open .tabbar { transform: translate(-50%, 170%); opacity: 0; pointer-events: none; }
 body.kb-open #disc { opacity: 0; pointer-events: none; }
-body.kb-open { padding-bottom: calc(30vh + var(--safe-bottom)); }
+body.kb-open { padding-bottom: calc(var(--kb, 0px) + 24px + var(--safe-bottom)); }
 body.kb-open .chat-panel { height: auto; min-height: 300px; }
-@media (max-width: 640px) {
-    body.kb-open { padding-bottom: calc(30vh + var(--safe-bottom)); }
-}
 
 /* ---------- 移动端适配 ---------- */
 @media (max-width: 640px) {
@@ -1709,26 +1706,43 @@ async function sendChat() {
 
 $('#chatInput').addEventListener('keypress', e => { if (e.key === 'Enter') sendChat(); });
 
-/* 输入时不被键盘/悬浮元素遮挡 */
+/* 输入时不被键盘/悬浮元素遮挡：按实际键盘高度收紧 */
 (function () {
     const ci = $('#chatInput');
     if (!ci) return;
-    const centerInput = (smooth) => {
-        try { ci.scrollIntoView({ block: 'center', behavior: smooth ? 'smooth' : 'auto' }); } catch (e) {}
-    };
+    const vv = window.visualViewport;
+    const isOpen = () => document.body.classList.contains('kb-open');
+
+    function syncKb() {
+        if (!vv) return;
+        const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+        document.documentElement.style.setProperty('--kb', kb + 'px');
+        if (isOpen() && kb > 0) {
+            // 键盘动画结束后，把输入框贴到键盘上沿
+            clearTimeout(syncKb._t);
+            syncKb._t = setTimeout(() => {
+                try { ci.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (e) {}
+            }, 80);
+        }
+    }
+
     ci.addEventListener('focus', () => {
         document.body.classList.add('kb-open');
-        setTimeout(() => centerInput(true), 360);
-        setTimeout(() => centerInput(false), 820);
+        syncKb();
+        setTimeout(syncKb, 300);
+        setTimeout(() => { if (isOpen()) { try { ci.scrollIntoView({ block: 'end' }); } catch (e) {} } }, 650);
     });
     ci.addEventListener('blur', () => {
-        // 延迟一点，避免点发送按钮时闪动
-        setTimeout(() => { if (document.activeElement !== ci) document.body.classList.remove('kb-open'); }, 120);
+        setTimeout(() => {
+            if (document.activeElement !== ci) {
+                document.body.classList.remove('kb-open');
+                document.documentElement.style.setProperty('--kb', '0px');
+            }
+        }, 120);
     });
-    if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', () => {
-            if (document.activeElement !== ci) document.body.classList.remove('kb-open');
-        });
+    if (vv) {
+        vv.addEventListener('resize', syncKb);
+        vv.addEventListener('scroll', syncKb);
     }
 })();
 
