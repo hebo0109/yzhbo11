@@ -202,6 +202,8 @@ body.has-bg.dark-theme .chat-box { background: rgba(0, 0, 0, 0.3); }
 }
 .btn-refresh-msg:hover { background: var(--accent-soft); transform: rotate(180deg); }
 
+.hp-input { position: absolute !important; left: -9999px !important; width: 1px !important; height: 1px !important; opacity: 0 !important; pointer-events: none !important; }
+
 .msg-item { padding: 18px 0; border-bottom: 1px solid var(--border); display: flex; gap: 14px; align-items: flex-start; }
 .msg-item:last-child { border-bottom: none; }
 .msg-item .msg-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; transition: all 0.4s; }
@@ -1081,6 +1083,7 @@ body.has-bg.dark-theme .chat-panel .chat-box { background: rgba(0, 0, 0, .3); }
         <form id="guestForm">
             <input name="name" placeholder="你的昵称" maxlength="40" required autocomplete="off">
             <input name="body" placeholder="有什么想说的…" maxlength="500" required autocomplete="off">
+            <input type="text" name="website" class="hp-input" tabindex="-1" autocomplete="off" aria-hidden="true">
             <button type="submit"><svg class="paw-tiny" viewBox="0 0 24 24"><use href="#paw"/></svg> 送出</button>
         </form>
         <div id="messagesList"></div>
@@ -1426,6 +1429,14 @@ body.has-bg.dark-theme .chat-panel .chat-box { background: rgba(0, 0, 0, .3); }
         <div id="panelCloud" style="display:none;">
             <label>Gist ID</label><input type="text" id="editGistId" autocomplete="off">
             <label>Token</label><input type="password" id="editGistToken" autocomplete="off">
+
+            <p class="modal-sub" style="margin-top:18px;">公共留言后端（Supabase，可选）。填了之后访客的留言会存到数据库，所有人都能看到；留空则回到本地/Gist 模式。</p>
+            <label>Supabase Project URL</label>
+            <input type="text" id="editGuestUrl" placeholder="https://xxxxxxxx.supabase.co" autocomplete="off">
+            <label>Supabase anon public key</label>
+            <input type="text" id="editGuestKey" placeholder="eyJhbGciOiJIUzI1NiIs..." autocomplete="off">
+            <p class="modal-sub" style="margin-top:-6px;">anon key 是公开密钥，放在前端是安全的；数据权限由数据库的 RLS 策略决定。</p>
+
             <div class="dialog-actions">
                 <button type="button" class="primary" id="btnSaveCloud">保存并同步</button>
                 <button type="button" class="ghost" data-close>关闭</button>
@@ -2134,6 +2145,7 @@ const DEFAULT_DATA = {
     aiName: 'AI 分身', aiAvatar: '',
     notice: '新图集已更新 | 雨、翼、百合与眼睛，翻开看看吧。\n来自未眠的留言 | 雪落无声，记得早点睡。',
     notes: [],
+    guestApi: { url: '', key: '' },
     gallery: [
         { title: 'RAIN', text: '雨落在窗上，像谁在低声说话。', img: '' },
         { title: 'WINGS', text: '如果无法飞行，就把翅膀藏进梦里。', img: '' },
@@ -2183,8 +2195,54 @@ async function writeStore(store) {
     } catch (e) { return { ok: false, error: e.message }; }
 }
 
+/* ================= 公共留言后端（Supabase，可选） =================
+   在 后台 → 云端 里填 Project URL 与 anon key 即启用；
+   留空则退回原来的「本地 + Gist」模式。
+   访客无需登录：anon 权限被 RLS 限制为「只能新增 / 读取」。 */
+function guestApiCfg() {
+    const c = (siteSnapshot && siteSnapshot.guestApi) || {};
+    return { url: String(c.url || '').trim().replace(/\/+$/, ''), key: String(c.key || '').trim() };
+}
+function guestApiOn() { const c = guestApiCfg(); return !!(c.url && c.key); }
+function guestHeaders(c) {
+    return { apikey: c.key, Authorization: 'Bearer ' + c.key, 'Content-Type': 'application/json' };
+}
+async function loadPublicMsgs() {
+    const c = guestApiCfg();
+    if (!c.url || !c.key) return [];
+    const q = c.url + '/rest/v1/messages?select=name,body,created_at&hidden=eq.false&order=created_at.asc&limit=200';
+    const res = await fetchT(q, { headers: guestHeaders(c) }, 10000);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    return (Array.isArray(rows) ? rows : []).map(r => ({
+        name: r.name,
+        body: r.body,
+        time: r.created_at ? new Date(r.created_at).toLocaleString('zh-CN', { hour12: false }) : ''
+    }));
+}
+async function postPublicMsg(name, body) {
+    const c = guestApiCfg();
+    if (!c.url || !c.key) throw new Error('未配置公共后端');
+    const res = await fetchT(c.url + '/rest/v1/messages', {
+        method: 'POST',
+        headers: Object.assign(guestHeaders(c), { Prefer: 'return=minimal' }),
+        body: JSON.stringify({ name, body })
+    }, 10000);
+    if (!res.ok) {
+        let msg = 'HTTP ' + res.status;
+        try { const j = await res.json(); msg = j.message || j.hint || j.error_description || msg; } catch (e) {}
+        throw new Error(msg);
+    }
+}
+
 /* ================= 刷新留言功能 ================= */
 window.refreshMsgs = async function() {
+    if (guestApiOn()) {
+        toast('正在拉取最新留言...');
+        try { renderMsgs(await loadPublicMsgs()); toast('已获取最新数据 ✦'); }
+        catch (e) { toast('拉取失败：' + e.message); }
+        return;
+    }
     toast('正在拉取最新留言...');
     const store = await readStore(true); 
     renderMsgs(store.messages);
@@ -2243,6 +2301,9 @@ async function render() {
     applyAiProfile(data);
 
     renderMsgs(store.messages);
+    if (guestApiOn()) {
+        loadPublicMsgs().then(list => renderMsgs(list)).catch(() => { toast('公共留言读取失败，已显示缓存'); });
+    }
     FX.refresh();
     if (window.location.hash === '#profile') renderProfile(data);
 }
@@ -2266,8 +2327,33 @@ function renderMsgs(list) {
 }
 
 $('#guestForm').addEventListener('submit', async e => {
-    e.preventDefault(); const fd = new FormData(e.target); const name = fd.get('name').trim(); const body = fd.get('body').trim();
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const name = String(fd.get('name') || '').trim();
+    const body = String(fd.get('body') || '').trim();
+    const trap = String(fd.get('website') || '').trim();
+    if (trap) { e.target.reset(); return; }          // 蜜罐：机器人填写则静默丢弃
     if (!name || !body) return;
+
+    /* —— 公共后端模式 —— */
+    if (guestApiOn()) {
+        const last = Number(localStorage.getItem('snowfall_last_msg') || 0);
+        if (Date.now() - last < 30000) { toast('刚留过啦，30 秒后再试'); return; }
+        const btn = e.target.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        try {
+            await postPublicMsg(name, body);
+            localStorage.setItem('snowfall_last_msg', String(Date.now()));
+            e.target.reset();
+            renderMsgs(await loadPublicMsgs());
+            toast('已留下 ✦');
+        } catch (err) {
+            toast('留言失败：' + err.message);
+        } finally { btn.disabled = false; }
+        return;
+    }
+
+    /* —— 本地 / Gist 模式 —— */
     const store = await readStore(); store.messages = store.messages || [];
     store.messages.push({ name, body, time: new Date().toLocaleString() });
     const r = await writeStore(store); 
@@ -2348,6 +2434,9 @@ async function openAdmin() {
     else $('#aiAvatarPreview').innerHTML = '<span>默认猫爪</span>';
     tempAiAvatar = null;
 
+    $('#editGuestUrl').value = (d.guestApi && d.guestApi.url) || '';
+    $('#editGuestKey').value = (d.guestApi && d.guestApi.key) || '';
+
     renderColumnEditor(d.columns);
     renderGalleryEditor(d.gallery || []);
     renderNotes();
@@ -2357,6 +2446,31 @@ async function openAdmin() {
 // 管理面板留言渲染
 async function renderAdminMsgs(force = false) {
     if (!isAdmin()) return;
+
+    /* 公共后端模式：只读展示，删除在 Supabase 控制台完成 */
+    if (guestApiOn()) {
+        const clearBtn = $('#btnClearMsgs');
+        if (clearBtn) clearBtn.style.display = 'none';
+        const box = $('#adminMsgList');
+        if (force) toast('正在获取最新留言...');
+        box.innerHTML = '<div class="empty-hint">加载中…</div>';
+        try {
+            const list = await loadPublicMsgs();
+            $('#msgCount').textContent = list.length;
+            box.innerHTML = list.length
+                ? list.slice().reverse().map(m => `<div class="msg-item" style="align-items:flex-start;"><div class="msg-content"><div class="msg-name">${esc(m.name)}</div><div class="msg-body">${esc(m.body)}</div><div class="msg-time">${esc(m.time || '')}</div></div></div>`).join('')
+                  + `<p class="modal-sub" style="margin-top:14px;">公共留言存在 Supabase：删除请到 Supabase 控制台 → Table editor → messages。</p>`
+                : `<div class="empty-hint"><svg class="paw-md" viewBox="0 0 24 24"><use href="#paw"/></svg>暂无留言</div>`;
+            if (force) toast('留言已刷新 ✦');
+        } catch (e) {
+            box.innerHTML = `<div class="empty-hint">读取失败：${esc(e.message)}</div>`;
+            if (force) toast('读取失败');
+        }
+        return;
+    }
+    const clearBtn = $('#btnClearMsgs');
+    if (clearBtn) clearBtn.style.display = '';
+
     if(force) toast('正在获取最新留言...');
     
     const store = await readStore(force); 
@@ -2391,6 +2505,7 @@ async function renderAdminMsgs(force = false) {
 
 $('#btnClearMsgs').onclick = async () => { 
     if (!isAdmin()) { toast('请先登录'); return; } 
+    if (guestApiOn()) { toast('公共留言请在 Supabase 控制台清空'); return; }
     if (!confirm('确定清空全部留言？')) return; 
     const store = await readStore(); 
     store.messages = []; 
@@ -2581,9 +2696,20 @@ $('#btnClearAiAvatar').onclick = () => {
 };
 
 /* ================= 云端配置 ================= */
-$('#btnSaveCloud').onclick = () => {
+$('#btnSaveCloud').onclick = async () => {
     saveGistConfig({ id: $('#editGistId').value.trim(), token: $('#editGistToken').value.trim(), file: 'data.json' });
-    toast('云端配置已保存'); _cache = null; render();
+    const store = await readStore();
+    store.site = store.site || {};
+    store.site.guestApi = {
+        url: $('#editGuestUrl').value.trim(),
+        key: $('#editGuestKey').value.trim()
+    };
+    const r = await writeStore(store);
+    _cache = null;
+    await render();
+    if (!r.ok) toast('同步失败：' + r.error);
+    else if (r.mode === 'cloud') toast('云端与留言后端已保存 ✦');
+    else toast('已保存到本地（未填 Token，暂未同步到 Gist）');
 };
 
 /* ================= 视觉特效 FX ================= */
