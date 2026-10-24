@@ -914,6 +914,15 @@ body.has-bg.dark-theme .chat-panel .chat-box { background: rgba(0, 0, 0, .3); }
 .chat-msg .avatar { overflow: hidden; }
 .chat-msg .avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
 
+/* 手机上输入框聚焦（键盘弹出）时：让出键盘高度，并收起会遮挡的悬浮元素 */
+body.kb-open .tabbar { transform: translate(-50%, 170%); opacity: 0; pointer-events: none; }
+body.kb-open #disc { opacity: 0; pointer-events: none; }
+body.kb-open { padding-bottom: calc(48vh + var(--safe-bottom)); }
+body.kb-open .chat-panel { height: auto; min-height: 300px; }
+@media (max-width: 640px) {
+    body.kb-open { padding-bottom: calc(46vh + var(--safe-bottom)); }
+}
+
 /* ---------- 移动端适配 ---------- */
 @media (max-width: 640px) {
     body { padding-top: calc(78px + var(--safe-top)); padding-bottom: calc(118px + var(--safe-bottom)); }
@@ -1700,6 +1709,29 @@ async function sendChat() {
 
 $('#chatInput').addEventListener('keypress', e => { if (e.key === 'Enter') sendChat(); });
 
+/* 输入时不被键盘/悬浮元素遮挡 */
+(function () {
+    const ci = $('#chatInput');
+    if (!ci) return;
+    const centerInput = (smooth) => {
+        try { ci.scrollIntoView({ block: 'center', behavior: smooth ? 'smooth' : 'auto' }); } catch (e) {}
+    };
+    ci.addEventListener('focus', () => {
+        document.body.classList.add('kb-open');
+        setTimeout(() => centerInput(true), 360);
+        setTimeout(() => centerInput(false), 820);
+    });
+    ci.addEventListener('blur', () => {
+        // 延迟一点，避免点发送按钮时闪动
+        setTimeout(() => { if (document.activeElement !== ci) document.body.classList.remove('kb-open'); }, 120);
+    });
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', () => {
+            if (document.activeElement !== ci) document.body.classList.remove('kb-open');
+        });
+    }
+})();
+
 /* ================= 核心路由与页面跳转 ================= */
 function enterSite() {
     $('#splashScreen').classList.add('hidden');
@@ -1747,6 +1779,8 @@ function showTabPage(name, opts) {
     const key = TAB_PAGES[name] ? name : 'home';
     document.body.classList.remove('on-detail');
     document.body.classList.remove('on-profile');
+    document.body.classList.remove('kb-open');
+    if (key !== 'ai') { const ci = $('#chatInput'); if (ci) ci.blur(); }
     setActiveTab(key);
     switchPage($(TAB_PAGES[key]));
     window.scrollTo(0, 0);
