@@ -2157,7 +2157,13 @@ const DEFAULT_DATA = {
     notice: '新图集已更新 | 雨、翼、百合与眼睛，翻开看看吧。\n来自未眠的留言 | 雪落无声，记得早点睡。',
     notes: [],
     contactEmail: '',
-    guestApi: { url: '', key: '' },
+    guestApi: {
+        provider: 'cloudbase',
+        env: 'balanced-turkey-d0fd0a64af746d59',
+        region: 'ap-shanghai',
+        key: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjlkMWRjMzFlLWI0ZDAtNDQ4Yi1hNzZmLWIwY2M2M2Q4MTQ5OCJ9.eyJpc3MiOiJodHRwczovL2JhbGFuY2VkLXR1cmtleS1kMGZkMGE2NGFmNzQ2ZDU5LmFwLXNoYW5naGFpLnRjYi1hcGkudGVuY2VudGNsb3VkYXBpLmNvbSIsInN1YiI6ImFub24iLCJhdWQiOiJiYWxhbmNlZC10dXJrZXktZDBmZDBhNjRhZjc0NmQ1OSIsImV4cCI6NDA5NjUzMzIwMCwiaWF0IjoxNzkyODUwMDAwLCJub25jZSI6IldKelh3R1dsUXpDZ3VsNTlCNk5GVHciLCJhdF9oYXNoIjoiV0p6WHdHV2xRekNndWw1OUI2TkZUdyIsIm5hbWUiOiJBbm9ueW1vdXMiLCJzY29wZSI6ImFub255bW91cyIsInByb2plY3RfaWQiOiJiYWxhbmNlZC10dXJrZXktZDBmZDBhNjRhZjc0NmQ1OSIsIm1ldGEiOnsicGxhdGZvcm0iOiJQdWJsaXNoYWJsZUtleSJ9LCJ1c2VyX3R5cGUiOiIiLCJjbGllbnRfdHlwZSI6ImNsaWVudF91c2VyIiwiaXNfc3lzdGVtX2FkbWluIjpmYWxzZX0.KFRmzxnWiOGQHqJkj85xpQTAXF_RHD6OQpvUN6zF4uZweqQbk-bd_GdUXd2bxmMc-h31q75ABn5CU7QRM7WTCAJt7-QrrD0_tPOxbULAz78rFtCTvonbSb3892MmSVtBm9nTz8nCbJLVFAWxYMKqoP8y1jevVTCVQv9xictTwPHF909qhd1x1Fhy-KyGQaYxkbwZvBhC7wtR4Wg-KOVkX58hhduB8D2NAe2GjL2U7MtkL-LUFJ5aMtwjmorDAY5DXoMSZ_9c3eJc2iCINEeF6fVCn1ZSlF8yJ4qA4iNyfJWVcTrI_ybHNYdXi0_H1B4I5WekbADk0uG-8kbMjU5lLQ',
+        url: ''
+    },
     gallery: [
         { title: 'RAIN', text: '雨落在窗上，像谁在低声说话。', img: '' },
         { title: 'WINGS', text: '如果无法飞行，就把翅膀藏进梦里。', img: '' },
@@ -2207,44 +2213,95 @@ async function writeStore(store) {
     } catch (e) { return { ok: false, error: e.message }; }
 }
 
-/* ================= 公共留言后端（Supabase，可选） =================
-   在 后台 → 云端 里填 Project URL 与 anon key 即启用；
-   留空则退回原来的「本地 + Gist」模式。
-   访客无需登录：anon 权限被 RLS 限制为「只能新增 / 读取」。 */
+/* ================= 公共留言后端（CloudBase / Supabase） ================= */
 function guestApiCfg() {
     const c = (siteSnapshot && siteSnapshot.guestApi) || {};
-    return { url: String(c.url || '').trim().replace(/\/+$/, ''), key: String(c.key || '').trim() };
+    const d = (typeof DEFAULT_DATA !== 'undefined' && DEFAULT_DATA.guestApi) || {};
+    const cfg = (c && (c.provider || c.env || c.url)) ? c : d;
+    if (cfg.provider === 'cloudbase' && cfg.env && cfg.key) {
+        return { provider: 'cloudbase', env: String(cfg.env).trim(), region: String(cfg.region || 'ap-shanghai').trim(), key: String(cfg.key).trim() };
+    }
+    const url = String(cfg.url || '').trim().replace(/\/+$/, '');
+    if (url && cfg.key) return { provider: 'supabase', url, key: String(cfg.key).trim() };
+    return { provider: '' };
 }
-function guestApiOn() { const c = guestApiCfg(); return !!(c.url && c.key); }
+function guestApiOn() { return !!guestApiCfg().provider; }
+
+/* ---------- Supabase ---------- */
 function guestHeaders(c) {
     return { apikey: c.key, Authorization: 'Bearer ' + c.key, 'Content-Type': 'application/json' };
 }
+
+/* ---------- CloudBase（腾讯云开发，文档型数据库） ---------- */
+let cbSdkPromise = null, cbApp = null, cbAppEnv = '';
+function loadCloudBaseSDK() {
+    if (window.cloudbase) return Promise.resolve(window.cloudbase);
+    if (cbSdkPromise) return cbSdkPromise;
+    cbSdkPromise = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
+        s.async = true;
+        s.onload = () => window.cloudbase ? resolve(window.cloudbase) : reject(new Error('SDK 加载异常'));
+        s.onerror = () => reject(new Error('SDK 加载失败'));
+        document.head.appendChild(s);
+    });
+    return cbSdkPromise;
+}
+async function cbDatabase() {
+    const c = guestApiCfg();
+    if (c.provider !== 'cloudbase') throw new Error('未配置 CloudBase');
+    const sdk = await loadCloudBaseSDK();
+    if (!cbApp || cbAppEnv !== c.env) {
+        cbApp = sdk.init({ env: c.env, region: c.region, accessKey: c.key });
+        cbAppEnv = c.env;
+    }
+    return cbApp.database();
+}
+
 async function loadPublicMsgs() {
     const c = guestApiCfg();
-    if (!c.url || !c.key) return [];
-    const q = c.url + '/rest/v1/messages?select=name,body,created_at&hidden=eq.false&order=created_at.asc&limit=200';
-    const res = await fetchT(q, { headers: guestHeaders(c) }, 10000);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const rows = await res.json();
-    return (Array.isArray(rows) ? rows : []).map(r => ({
-        name: r.name,
-        body: r.body,
-        time: r.created_at ? new Date(r.created_at).toLocaleString('zh-CN', { hour12: false }) : ''
-    }));
+    if (c.provider === 'cloudbase') {
+        const db = await cbDatabase();
+        const res = await db.collection('messages').limit(100).get();
+        const rows = (res && res.data) || [];
+        return rows.slice()
+            .sort((a, b) => Number(a.t || 0) - Number(b.t || 0))
+            .map(r => ({ name: r.name, body: r.body, time: r.t ? new Date(r.t).toLocaleString('zh-CN', { hour12: false }) : '' }));
+    }
+    if (c.provider === 'supabase') {
+        const q = c.url + '/rest/v1/messages?select=name,body,created_at&hidden=eq.false&order=created_at.asc&limit=200';
+        const res = await fetchT(q, { headers: guestHeaders(c) }, 10000);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const rows = await res.json();
+        return (Array.isArray(rows) ? rows : []).map(r => ({
+            name: r.name,
+            body: r.body,
+            time: r.created_at ? new Date(r.created_at).toLocaleString('zh-CN', { hour12: false }) : ''
+        }));
+    }
+    return [];
 }
 async function postPublicMsg(name, body) {
     const c = guestApiCfg();
-    if (!c.url || !c.key) throw new Error('未配置公共后端');
-    const res = await fetchT(c.url + '/rest/v1/messages', {
-        method: 'POST',
-        headers: Object.assign(guestHeaders(c), { Prefer: 'return=minimal' }),
-        body: JSON.stringify({ name, body })
-    }, 10000);
-    if (!res.ok) {
-        let msg = 'HTTP ' + res.status;
-        try { const j = await res.json(); msg = j.message || j.hint || j.error_description || msg; } catch (e) {}
-        throw new Error(msg);
+    if (c.provider === 'cloudbase') {
+        const db = await cbDatabase();
+        await db.collection('messages').add({ name, body, t: Date.now() });
+        return;
     }
+    if (c.provider === 'supabase') {
+        const res = await fetchT(c.url + '/rest/v1/messages', {
+            method: 'POST',
+            headers: Object.assign(guestHeaders(c), { Prefer: 'return=minimal' }),
+            body: JSON.stringify({ name, body })
+        }, 10000);
+        if (!res.ok) {
+            let msg = 'HTTP ' + res.status;
+            try { const j = await res.json(); msg = j.message || j.hint || j.error_description || msg; } catch (e) {}
+            throw new Error(msg);
+        }
+        return;
+    }
+    throw new Error('未配置公共后端');
 }
 
 /* ================= 刷新留言功能 ================= */
@@ -2382,7 +2439,18 @@ $('#guestForm').addEventListener('submit', async e => {
             renderMsgs(await loadPublicMsgs());
             toast('已留下 ✦');
         } catch (err) {
-            toast('留言失败：' + err.message);
+            // 公共后端不可用（如安全来源未配置）时，先存本地，避免留言丢失
+            try {
+                const store = await readStore();
+                store.messages = store.messages || [];
+                store.messages.push({ name, body, time: new Date().toLocaleString() });
+                await writeStore(store);
+                e.target.reset();
+                renderMsgs(store.messages);
+                toast('公共后端暂不可用，已先存在本地');
+            } catch (e2) {
+                toast('留言失败：' + err.message);
+            }
         } finally { btn.disabled = false; }
         return;
     }
@@ -2736,10 +2804,14 @@ $('#btnSaveCloud').onclick = async () => {
     saveGistConfig({ id: $('#editGistId').value.trim(), token: $('#editGistToken').value.trim(), file: 'data.json' });
     const store = await readStore();
     store.site = store.site || {};
-    store.site.guestApi = {
-        url: $('#editGuestUrl').value.trim(),
-        key: $('#editGuestKey').value.trim()
-    };
+    const gUrl = $('#editGuestUrl').value.trim();
+    const gKey = $('#editGuestKey').value.trim();
+    if (gUrl && gKey) {
+        store.site.guestApi = { provider: 'supabase', url: gUrl, key: gKey, env: '', region: '' };
+    } else if (!store.site.guestApi || !store.site.guestApi.provider) {
+        // 未填 Supabase 信息时，保留页内已配置的 CloudBase
+        store.site.guestApi = Object.assign({}, DEFAULT_DATA.guestApi);
+    }
     const r = await writeStore(store);
     _cache = null;
     await render();
