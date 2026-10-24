@@ -1640,8 +1640,39 @@ function loadMusic(url) {
 }
 
 /* ================= AI 配置管理 ================= */
-function getAiCfg() { try { return JSON.parse(localStorage.getItem(AI_CFG_KEY)) || {}; } catch { return {}; } }
+function getAiCfg() {
+    let local = {};
+    try { local = JSON.parse(localStorage.getItem(AI_CFG_KEY)) || {}; } catch (e) { local = {}; }
+    const pub = (siteSnapshot && siteSnapshot.aiCfg) ? siteSnapshot.aiCfg : {};
+    return {
+        url: local.url || pub.url || '',
+        key: local.key || pub.key || '',
+        model: local.model || pub.model || '',
+        prompt: local.prompt || pub.prompt || '',
+        memory: local.memory || ''
+    };
+}
 function saveAiCfg(cfg) { localStorage.setItem(AI_CFG_KEY, JSON.stringify(cfg)); }
+
+/* ================= 访客每日 AI 额度（管理员不限） ================= */
+const AI_QUOTA_KEY = 'snowfall_ai_quota';
+const AI_DAILY_LIMIT = 20;
+function aiToday() { const d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
+function aiQuotaLeft() {
+    try {
+        const q = JSON.parse(localStorage.getItem(AI_QUOTA_KEY) || '{}');
+        if (q.date !== aiToday()) return AI_DAILY_LIMIT;
+        return Math.max(0, AI_DAILY_LIMIT - (q.count || 0));
+    } catch (e) { return AI_DAILY_LIMIT; }
+}
+function aiQuotaUse() {
+    try {
+        let q = JSON.parse(localStorage.getItem(AI_QUOTA_KEY) || '{}');
+        if (q.date !== aiToday()) q = { date: aiToday(), count: 0 };
+        q.count = (q.count || 0) + 1;
+        localStorage.setItem(AI_QUOTA_KEY, JSON.stringify(q));
+    } catch (e) {}
+}
 
 /* ================= AI 聊天逻辑 ================= */
 let chatHistory = []; 
@@ -1723,7 +1754,11 @@ async function sendChat() {
 
     const cfg = getAiCfg();
     if (!cfg.key) {
-        toast('管理员尚未配置 AI 接口，请先进入后台设置');
+        toast('AI 还没接通，稍后再来试试吧');
+        return;
+    }
+    if (!isAdmin() && aiQuotaLeft() <= 0) {
+        toast('今天的 AI 对话额度用完了，明天再来吧');
         return;
     }
 
@@ -1767,6 +1802,7 @@ async function sendChat() {
         chatHistory.push({ role: 'assistant', content: aiReply });
         if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
         saveChatLog();
+        if (!isAdmin()) aiQuotaUse();
         appendChatMsg('ai', aiReply);
 
     } catch (e) {
@@ -2940,9 +2976,13 @@ $('#btnSaveProfile').onclick = async () => {
 };
 
 $('#btnSaveAi').onclick = async () => {
-    saveAiCfg({ url: $('#editAiUrl').value.trim(), key: $('#editAiKey').value.trim(), model: $('#editAiModel').value.trim(), prompt: $('#editAiPrompt').value, memory: $('#editAiMemory').value });
+    const aiUrl = $('#editAiUrl').value.trim(), aiKey = $('#editAiKey').value.trim();
+    const aiModel = $('#editAiModel').value.trim(), aiPrompt = $('#editAiPrompt').value;
+    saveAiCfg({ url: aiUrl, key: aiKey, model: aiModel, prompt: aiPrompt, memory: $('#editAiMemory').value });
     const store = await readStore(); store.site = store.site || {};
     store.site.aiName = $('#editAiName').value.trim() || 'AI 分身';
+    // 把接口配置同步到云端（公开），访客才能使用 AI；长期记忆只留在本机
+    store.site.aiCfg = (aiUrl && aiKey) ? { url: aiUrl, key: aiKey, model: aiModel, prompt: aiPrompt } : null;
     if (tempAiAvatar !== null) { store.site.aiAvatar = tempAiAvatar; tempAiAvatar = null; }
     const r = await writeStore(store);
     if (r.ok) { render(); toast('AI 设置已保存 ✦'); }
