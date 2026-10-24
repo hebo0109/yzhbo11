@@ -2218,8 +2218,8 @@ async function deleteNote(i) {
     notes.splice(i, 1);
     store.site.notes = notes;
     const r = await writeStore(store);
-    if (r.ok) { siteSnapshot.notes = notes; renderNotes(); toast('已删除'); }
-    else toast('失败：' + r.error);
+    saveToast(r, '已删除');
+    if (r.ok) { siteSnapshot.notes = notes; renderNotes(); }
 }
 
 $('#noteForm').addEventListener('submit', async e => {
@@ -2234,12 +2234,12 @@ $('#noteForm').addEventListener('submit', async e => {
     notes.push({ text, time: new Date().toLocaleString('zh-CN', { hour12: false }) });
     store.site.notes = notes;
     const r = await writeStore(store);
+    saveToast(r, '已贴上 ✦');
     if (r.ok) {
         ta.value = '';
         siteSnapshot.notes = notes;
         renderNotes();
-        toast('已贴上 ✦');
-    } else toast('失败：' + r.error);
+    }
 });
 
 /* ================= iOS 风格消息提示 ================= */
@@ -2421,6 +2421,13 @@ async function writeStore(store) {
         if (!r.ok) throw new Error('权限不足或 Token 错误');
         return { ok: true, mode: 'cloud' };
     } catch (e) { return { ok: false, error: e.message }; }
+}
+
+/* 保存结果提示：明确区分「已同步云端」和「只存本机」 */
+function saveToast(r, okText) {
+    if (!r || !r.ok) { toast('保存失败：' + ((r && r.error) || '未知错误')); return; }
+    if (r.mode === 'cloud') { toast(okText); return; }
+    toast('已存本机；这台设备没填 GitHub Token，其他设备看不到改动');
 }
 
 /* ================= 公共留言后端（CloudBase / Supabase） ================= */
@@ -2972,7 +2979,8 @@ $('#btnSaveProfile').onclick = async () => {
 
     store.site = d; 
     const r = await writeStore(store); 
-    if (r.ok) { toast('已保存 ✦'); render(); } else toast('同步失败：' + r.error);
+    saveToast(r, '已保存 ✦');
+    if (r.ok) render();
 };
 
 $('#btnSaveAi').onclick = async () => {
@@ -2985,8 +2993,8 @@ $('#btnSaveAi').onclick = async () => {
     store.site.aiCfg = (aiUrl && aiKey) ? { url: aiUrl, key: aiKey, model: aiModel, prompt: aiPrompt } : null;
     if (tempAiAvatar !== null) { store.site.aiAvatar = tempAiAvatar; tempAiAvatar = null; }
     const r = await writeStore(store);
-    if (r.ok) { render(); toast('AI 设置已保存 ✦'); }
-    else toast('同步失败：' + r.error);
+    saveToast(r, 'AI 设置已保存 ✦');
+    if (r.ok) render();
 };
 
 $('#btnClearChat').onclick = () => {
@@ -3027,12 +3035,12 @@ $('#btnSaveColumns').onclick = async () => {
     const store = await readStore(); store.site = store.site || {};
     store.site.columns = editCols;
     const r = await writeStore(store); 
-    if (r.ok) { 
-        toast('组件已保存 ✦'); 
+    saveToast(r, '组件已保存 ✦');
+    if (r.ok) {
         render(); 
         closeModal($('#adminModal')); 
         if (window.location.hash.startsWith('#article-')) { router(); }
-    } else toast('失败：' + r.error);
+    }
 };
 
 /* ================= 图集编辑 ================= */
@@ -3074,8 +3082,8 @@ $('#btnSaveGallery').onclick = async () => {
     const store = await readStore(); store.site = store.site || {};
     store.site.gallery = editGallery;
     const r = await writeStore(store);
-    if (r.ok) { toast('图集已保存 ✦'); render(); closeModal($('#adminModal')); }
-    else toast('失败：' + r.error);
+    saveToast(r, '图集已保存 ✦');
+    if (r.ok) { render(); closeModal($('#adminModal')); }
 };
 
 /* ================= AI 形象 ================= */
