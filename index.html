@@ -204,6 +204,12 @@ body.has-bg.dark-theme .chat-box { background: rgba(0, 0, 0, 0.3); }
 
 .hp-input { position: absolute !important; left: -9999px !important; width: 1px !important; height: 1px !important; opacity: 0 !important; pointer-events: none !important; }
 
+.mail-hint { text-align: right; margin: -12px 4px 14px; font-size: 11.5px; letter-spacing: .04em; }
+.mail-hint a { color: var(--text-soft); text-decoration: none; border-bottom: 1px dashed var(--border); padding-bottom: 2px; transition: all .3s; }
+.mail-hint a:hover { color: var(--accent); border-color: var(--accent); }
+.mail-hint b { font-weight: 500; color: var(--text-dim); margin: 0 2px; }
+.mail-hint a:hover b { color: var(--accent); }
+
 .msg-item { padding: 18px 0; border-bottom: 1px solid var(--border); display: flex; gap: 14px; align-items: flex-start; }
 .msg-item:last-child { border-bottom: none; }
 .msg-item .msg-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; transition: all 0.4s; }
@@ -1086,6 +1092,9 @@ body.has-bg.dark-theme .chat-panel .chat-box { background: rgba(0, 0, 0, .3); }
             <input type="text" name="website" class="hp-input" tabindex="-1" autocomplete="off" aria-hidden="true">
             <button type="submit"><svg class="paw-tiny" viewBox="0 0 24 24"><use href="#paw"/></svg> 送出</button>
         </form>
+        <p class="mail-hint" id="mailHint" style="display:none;">
+            <a id="mailGuest" href="#" title="用邮件发送给我">不想公开？<b>写信给我</b> →</a>
+        </p>
         <div id="messagesList"></div>
     </section>
 
@@ -1310,6 +1319,8 @@ body.has-bg.dark-theme .chat-panel .chat-box { background: rgba(0, 0, 0, .3); }
             <label>主标题 (支持 HTML)</label><textarea id="editHeroTitle" rows="2"></textarea>
             <label>副标题</label><input type="text" id="editHeroSub" autocomplete="off">
             <label>天气城市</label><input type="text" id="editCity" placeholder="如：合肥" autocomplete="off">
+            <label>收信邮箱（留言板「写信给我」用，留空则隐藏）</label>
+            <input type="email" id="editEmail" placeholder="you@example.com" autocomplete="off">
             <label>纪念日日期</label><input type="date" id="editAnnivDate">
             <label>纪念日名称</label><input type="text" id="editAnnivName" autocomplete="off">
 
@@ -2145,6 +2156,7 @@ const DEFAULT_DATA = {
     aiName: 'AI 分身', aiAvatar: '',
     notice: '新图集已更新 | 雨、翼、百合与眼睛，翻开看看吧。\n来自未眠的留言 | 雪落无声，记得早点睡。',
     notes: [],
+    contactEmail: '',
     guestApi: { url: '', key: '' },
     gallery: [
         { title: 'RAIN', text: '雨落在窗上，像谁在低声说话。', img: '' },
@@ -2293,6 +2305,8 @@ async function render() {
 
     // 飘雪强度 / 图集 / 通知 / AI 形象
     siteSnapshot = data;
+    contactEmail = String(data.contactEmail || '').trim();
+    updateMailLink();
     Snow.setLevel(data.snow || 'normal');
     $('#btnSnow').style.display = data.snow === 'off' ? 'none' : '';
     renderGallery(data.gallery);
@@ -2325,6 +2339,26 @@ function renderMsgs(list) {
     if (!list || !list.length) { box.innerHTML = `<div class="empty-hint"><svg class="paw-md" viewBox="0 0 24 24"><use href="#paw"/></svg>暂无回响</div>`; return; }
     box.innerHTML = list.slice().reverse().map(m => `<div class="msg-item"><div class="msg-avatar"><svg class="paw-sm" viewBox="0 0 24 24"><use href="#paw"/></svg></div><div class="msg-content"><div class="msg-name">${esc(m.name)}</div><div class="msg-body">${esc(m.body)}</div></div></div>`).join('');
 }
+
+/* ================= 「写信给我」邮件入口 ================= */
+let contactEmail = '';
+function updateMailLink() {
+    const hint = $('#mailHint'), link = $('#mailGuest');
+    if (!hint || !link) return;
+    if (!contactEmail) { hint.style.display = 'none'; return; }
+    hint.style.display = '';
+    const f = $('#guestForm');
+    const name = f && f.name ? String(f.name.value || '').trim() : '';
+    const body = f && f.body ? String(f.body.value || '').trim() : '';
+    const subject = name ? `来自 ${name} 的留言` : '来自小雪窝的留言';
+    const content = (body ? body + '\n\n' : '') + '—— 来自 ' + window.location.href;
+    link.href = 'mailto:' + contactEmail + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(content);
+}
+(function () {
+    const f = $('#guestForm');
+    if (!f) return;
+    ['input', 'change'].forEach(ev => f.addEventListener(ev, updateMailLink));
+})();
 
 $('#guestForm').addEventListener('submit', async e => {
     e.preventDefault();
@@ -2407,6 +2441,7 @@ async function openAdmin() {
 
     $('#editSplashText').value = d.splashText || '';
     $('#editName').value = d.name; $('#editSig').value = d.sig; $('#editHeroTitle').value = d.heroTitle; $('#editHeroSub').value = d.heroSub; $('#editCity').value = d.city;
+    $('#editEmail').value = d.contactEmail || '';
     $('#editMusicUrl').value = d.musicUrl || '';
     $('#editTyped').value = d.typed || '';
     $('#editFx').value = d.fx || 'full';
@@ -2568,6 +2603,7 @@ $('#btnSaveProfile').onclick = async () => {
     d.theme = currentSelectedTheme;
     d.splashText = $('#editSplashText').value;
     d.name = $('#editName').value; d.sig = $('#editSig').value; d.heroTitle = $('#editHeroTitle').value; d.heroSub = $('#editHeroSub').value; d.city = $('#editCity').value;
+    d.contactEmail = $('#editEmail').value.trim();
     d.musicUrl = $('#editMusicUrl').value.trim();
     d.typed = $('#editTyped').value;
     d.fx = $('#editFx').value;
